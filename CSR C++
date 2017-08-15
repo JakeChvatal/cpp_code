@@ -1,0 +1,862 @@
+#include "CSRMatrix.h"
+
+namespace hsap
+{
+	namespace csr
+	{
+
+		CSRMatrix::CSRMatrix(std::vector<int> &Is, std::vector<int> &Js, std::vector<double> &Ds, int numR, int numC)
+		{
+			I = Is;
+			J = Js;
+			D = Ds;
+			numRows_Renamed = numR;
+			numCols_Renamed = numC;
+		}
+
+		CSRMatrix::CSRMatrix(TradMatrix *m)
+		{
+			I = std::vector<int>(m->numRows() + 1);
+			std::vector<int> js(2*m->numRows());
+			std::vector<double> ds(2*m->numRows());
+			for (int i = 0; i < m->numRows(); i++)
+			{
+				for (int j = 0; j < m->numCols(); j++)
+				{
+					if (m->at(i,j) != 0)
+					{
+						I[i + 1]++;
+						js.push_back(j);
+						ds.push_back(m->at(i,j));
+					}
+				}
+			}
+			for (int i = 2; i < I.size(); i++)
+			{
+				I[i] += I[i - 1];
+			}
+			J = std::vector<int>(js.size());
+			D = std::vector<double>(ds.size());
+			for (int k = 0; k < js.size(); k++)
+			{
+				J[k] = js[k];
+				D[k] = ds[k];
+			}
+			numRows_Renamed = m->numRows();
+			numCols_Renamed = m->numCols();
+		}
+
+		CSRMatrix *CSRMatrix::copy()
+		{
+			std::vector<int> nI(I.size()), nJ = std::vector<int>(J.size());
+			std::vector<double> nD(D.size());
+			System::arraycopy(I, 0, nI, 0, I.size());
+			System::arraycopy(J, 0, nJ, 0, J.size());
+			System::arraycopy(D, 0, nD, 0, D.size());
+			return new CSRMatrix(nI, nJ, nD, numRows(), numCols());
+		}
+
+		CSRMatrix *CSRMatrix::identity(int n)
+		{
+			std::vector<int> nI(n + 1), nJ = std::vector<int>(n);
+			std::vector<double> nD(n);
+			for (int i = 0; i < n; i++)
+			{
+				nI[i + 1] = i + 1;
+				nJ[i] = i;
+				nD[i] = 1;
+			}
+			return new CSRMatrix(nI, nJ, nD, n, n);
+		}
+
+		CSRMatrix::CSRMatrix(ColVec *v)
+		{
+			I = std::vector<int>(v->numRows() + 1);
+			J = std::vector<int>(v->J->length);
+			D = v->D;
+			for (int i = 0; i < v->J->length; i++)
+			{
+				I[v->J[i] + 1]++;
+			}
+			for (int i = 2; i < I.size(); i++)
+			{
+				I[i] += I[i - 1];
+			}
+			numRows_Renamed = v->numRows();
+			numCols_Renamed = 1;
+		}
+
+		CSRMatrix *CSRMatrix::transpose()
+		{
+			std::vector<int> nI(numCols_Renamed + 1);
+			for (int k = 0; k < J.size(); k++)
+			{
+				nI[J[k] + 1]++;
+			}
+			for (int i = 2; i < nI.size(); i++)
+			{
+				nI[i] += nI[i - 1];
+			}
+			std::vector<int> nJ(nI[nI.size() - 1]);
+			std::vector<double> nD(nI[nI.size() - 1]);
+			std::vector<int> counter(numCols_Renamed);
+			for (int i = 0; i < I.size() - 1; i++)
+			{
+				for (int k = I[i]; k < I[i + 1]; k++)
+				{
+					nJ[nI[J[k]] + counter[J[k]]] = i;
+					nD[nI[J[k]] + counter[J[k]]] = D[k];
+					counter[J[k]]++;
+				}
+			}
+			return new CSRMatrix(nI, nJ, nD, numCols_Renamed, numRows_Renamed);
+		}
+
+		int CSRMatrix::numRows()
+		{
+			return numRows_Renamed;
+		}
+
+		int CSRMatrix::numCols()
+		{
+			return numCols_Renamed;
+		}
+
+		CSRMatrix *CSRMatrix::neg(CSRMatrix *m)
+		{
+			std::vector<int> nI(I.size()), nJ = std::vector<int>(J.size());
+			std::vector<double> nD(D.size());
+			System::arraycopy(I, 0, nI, 0, I.size());
+			System::arraycopy(J, 0, nJ, 0, J.size());
+			for (int i = 0; i < D.size(); i++)
+			{
+				nD[i] = -D[i];
+			}
+			return new CSRMatrix(nI, nJ, nD, numRows_Renamed, numCols_Renamed);
+		}
+
+		CSRMatrix *CSRMatrix::add(CSRMatrix *m)
+		{
+			if (m->numRows() != numRows() || m->numCols() != numCols())
+			{
+				throw Error(L"dimension mismatch");
+			}
+			std::vector<int> I0 = I, J0 = J, I1 = m->I, J1 = m->J;
+			std::vector<double> D0 = D, D1 = m->D;
+			std::vector<int> nI(I0.size());
+			for (int i = 0; i < I0.size() - 1; i++)
+			{
+				int k0 = I0[i], k1 = I1[i];
+				while (k0 < I0[i + 1] && k1 < I1[i + 1])
+				{
+					if (J0[k0] < J1[k1])
+					{
+						k0++;
+					}
+					else if (J0[k0] > J1[k1])
+					{
+						k1++;
+					}
+					else
+					{
+						k0++;
+						k1++;
+					}
+					nI[i + 1]++;
+				}
+				nI[i + 1] += I0[i + 1] - k0 + I1[i + 1] - k1;
+			}
+			for (int i = 2; i < nI.size(); i++)
+			{
+				nI[i] += nI[i - 1];
+			}
+			std::vector<int> nJ(nI[nI.size() - 1]);
+			std::vector<double> nD(nI[nI.size() - 1]);
+			for (int i = 0; i < I0.size() - 1; i++)
+			{
+				int count = nI[i], k0 = I0[i], k1 = I1[i];
+				while (k0 < I0[i + 1] && k1 < I1[i + 1])
+				{
+					if (J0[k0] < J1[k1])
+					{
+						nJ[count] = J0[k0];
+						nD[count] = D0[k0];
+						k0++;
+					}
+					else
+					{
+					if (J0[k0] > J1[k1])
+					{
+					nJ[count] = J1[k1];
+					nD[count] = D1[k1];
+					k1++;
+					}
+				else
+				{
+							nJ[count] = J0[k0];
+							nD[count] = D0[k0] + D1[k1];
+							k0++;
+							k1++;
+				}
+					}
+					count++;
+				}
+				while (k0 < I0[i + 1])
+				{
+					nJ[count] = J0[k0];
+					nD[count] = D0[k0];
+					k0++;
+					count++;
+				}
+				while (k1 < I1[i + 1])
+				{
+					nJ[count] = J1[k1];
+					nD[count] = D1[k1];
+					k1++;
+					count++;
+				}
+			}
+			return new CSRMatrix(nI, nJ, nD, numRows_Renamed, numCols_Renamed);
+		}
+
+		CSRMatrix *CSRMatrix::sub(CSRMatrix *m)
+		{
+			if (m->numRows() != numRows() || m->numCols() != numCols())
+			{
+				throw Error(L"dimension mismatch");
+			}
+			std::vector<int> I0 = I, J0 = J, I1 = m->I, J1 = m->J;
+			std::vector<double> D0 = D, D1 = m->D;
+			std::vector<int> nI(I0.size());
+			for (int i = 0; i < I0.size() - 1; i++)
+			{
+				int k0 = I0[i], k1 = I1[i];
+				while (k0 < I0[i + 1] && k1 < I1[i + 1])
+				{
+					if (J0[k0] < J1[k1])
+					{
+						k0++;
+					}
+					else if (J0[k0] > J1[k1])
+					{
+						k1++;
+					}
+					else
+					{
+						k0++;
+						k1++;
+					}
+					nI[i + 1]++;
+				}
+				nI[i + 1] += I0[i + 1] - k0 + I1[i + 1] - k1;
+			}
+			for (int i = 2; i < nI.size(); i++)
+			{
+				nI[i] += nI[i - 1];
+			}
+			std::vector<int> nJ(nI[nI.size() - 1]);
+			std::vector<double> nD(nI[nI.size() - 1]);
+			for (int i = 0; i < I0.size() - 1; i++)
+			{
+				int count = nI[i], k0 = I0[i], k1 = I1[i];
+				while (k0 < I0[i + 1] && k1 < I1[i + 1])
+				{
+					if (J0[k0] < J1[k1])
+					{
+						nJ[count] = J0[k0];
+						nD[count] = D0[k0];
+						k0++;
+					}
+					else
+					{
+					if (J0[k0] > J1[k1])
+					{
+					nJ[count] = J1[k1];
+					nD[count] = -D1[k1];
+					k1++;
+					}
+				else
+				{
+							nJ[count] = J0[k0];
+							nD[count] = D0[k0] - D1[k1];
+							k0++;
+							k1++;
+				}
+					}
+					count++;
+				}
+				while (k0 < I0[i + 1])
+				{
+					nJ[count] = J0[k0];
+					nD[count] = D0[k0];
+					k0++;
+					count++;
+				}
+				while (k1 < I1[i + 1])
+				{
+					nJ[count] = J1[k1];
+					nD[count] = -D1[k1];
+					k1++;
+					count++;
+				}
+			}
+			return new CSRMatrix(nI, nJ, nD, numRows_Renamed, numCols_Renamed);
+		}
+
+		CSRMatrix *CSRMatrix::mult(CSRMatrix *m)
+		{
+			if (m->numRows_Renamed != numCols_Renamed)
+			{
+				throw Error(L"dimension mismatch: " + numRows_Renamed + L"x" + numCols_Renamed + L" times " + m->numRows_Renamed + L"x" + std::to_wstring(m->numCols_Renamed));
+			}
+			std::vector<int> I0 = I, I1 = m->I, J0 = J, J1 = m->J;
+			std::vector<double> D0 = D, D1 = m->D;
+			std::vector<int> nI(numRows() + 1);
+			for (int i0 = 0;i0 < I0.size() - 1;i0++)
+			{
+				std::vector<bool> flag(m->numCols());
+				for (int k0 = I0[i0];k0 < I0[i0 + 1];k0++)
+				{
+					for (int k1 = I1[J0[k0]];k1 < I1[J0[k0] + 1];k1++)
+					{
+						flag[J1[k1]] = true;
+					}
+				}
+				for (int i = 0;i < flag.size();i++)
+				{
+					if (flag[i])
+					{
+						nI[i0 + 1]++;
+					}
+				}
+			}
+			for (int i = 2;i < nI.size();i++)
+			{
+				nI[i] += nI[i - 1];
+			}
+			std::vector<int> nJ(nI[nI.size() - 1]);
+			std::vector<double> nD(nI[nI.size() - 1]);
+			int count = 0;
+			for (int i0 = 0; i0 < I0.size() - 1; i0++)
+			{
+				std::vector<double> temp(m->numCols());
+				std::vector<bool> flag(m->numCols());
+				for (int k0 = I0[i0]; k0 < I0[i0 + 1]; k0++)
+				{
+					for (int k1 = I1[J0[k0]]; k1 < I1[J0[k0] + 1]; k1++)
+					{
+						temp[J1[k1]] += D0[k0]*D1[k1];
+						flag[J1[k1]] = true;
+					}
+				}
+				for (int i = 0;i < m->numCols();i++)
+				{
+					if (flag[i])
+					{
+						nJ[count] = i;
+						nD[count] = temp[i];
+						count++;
+					}
+				}
+			}
+			return new CSRMatrix(nI,nJ,nD,numRows_Renamed,m->numCols_Renamed);
+		}
+
+		ColVec *CSRMatrix::mult(ColVec *v)
+		{
+//JAVA TO C++ CONVERTER TODO TASK: Local classes are not converted by Java to C++ Converter:
+//			class PairWeight implements Comparable<PairWeight>
+				//		{
+				//			int x, y, w;
+				//			PairWeight(int xx, int yy, int ww)
+				//			{
+				//				x = xx;
+				//				y = yy;
+				//				w = ww;
+				//			}
+				//			@@Override public int compareTo(PairWeight p)
+				//			{
+				//				if(p.x> x)
+				//					return -1;
+				//				if(p.x<x)
+				//					return 1;
+				//				if(p.y> y)
+				//					return -1;
+				//				if(p.y<y)
+				//					return 1;
+				//				return 0;
+				//			}
+				//		}
+
+			std::vector<PairWeight*> pairs;
+
+			std::vector<int> I0 = I, J0 = J;
+			std::vector<double> D0 = D;
+			std::vector<int> J1 = v->J;
+			std::vector<double> D1 = v->D;
+
+			int maxRow = 0;
+			for (int i0 = 0; i0 < I0.size() - 1; i0++)
+			{
+				int k0 = I0[i0], k1 = 0, sum = 0;
+				while (k0 < I0[i0 + 1] && k1 < J1.size())
+				{
+					if (J0[k0] > J1[k1])
+					{
+						k1++;
+					}
+					else if (J0[k0] < J1[k1])
+					{
+						k0++;
+					}
+					else
+					{
+						sum += D0[k0++]*D1[k1];
+					}
+				}
+				if (sum != 0)
+				{
+					PairWeight tempVar(i0, 0, sum);
+					pairs.push_back(&tempVar);
+					maxRow = i0 > maxRow ? i0 : maxRow;
+				}
+			}
+
+			std::vector<int> nJ(pairs.size());
+			std::vector<double> nD(pairs.size());
+			for (int i = 0; i < pairs.size(); i++)
+			{
+				PairWeight *p = pairs[i];
+				nJ[i] = p->x;
+				nD[i] = p->w;
+			}
+			return new ColVec(nJ, nD);
+		}
+
+		std::vector<CSRMatrix*> CSRMatrix::decompose()
+		{
+			std::vector<int> nI0(I.size()), nI1 = std::vector<int>(I.size()), nI2 = std::vector<int>(I.size());
+			for (int i = 0; i < I.size() - 1; i++)
+			{
+				int pos = 0;
+				for (int k = I[i]; k < I[i + 1]; k++)
+				{
+					if (pos == 0)
+					{
+						if (i < J[k])
+						{
+						pos = 2;
+						}
+					else if (i == J[k])
+					{
+						pos = 1;
+					}
+					}
+					switch (pos)
+					{
+						case 0:
+							nI0[i + 1]++;
+							break;
+						case 1:
+							nI1[i + 1]++;
+							break;
+						case 2:
+							nI2[i + 1]++;
+					}
+					if (pos == 1)
+					{
+						pos++;
+					}
+				}
+			}
+			for (int i = 2; i < I.size(); i++)
+			{
+				nI0[i] += nI0[i - 1];
+				nI1[i] += nI1[i - 1];
+				nI2[i] += nI2[i - 1];
+			}
+			int c0 = 0, c1 = 0, c2 = 0;
+			std::vector<int> nJ0(nI0[nI0.size() - 1]), nJ1 = std::vector<int>(nI1[nI1.size() - 1]), nJ2 = std::vector<int>(nI2[nI2.size() - 1]);
+			std::vector<double> nD0(nI0[nI0.size() - 1]), nD1 = std::vector<double>(nI1[nI1.size() - 1]), nD2 = std::vector<double>(nI2[nI2.size() - 1]);
+			for (int i = 0; i < I.size() - 1; i++)
+			{
+				int pos = 0;
+				for (int k = I[i]; k < I[i + 1]; k++)
+				{
+					if (pos == 0)
+					{
+						if (i < J[k])
+						{
+						pos = 2;
+						}
+					else if (i == J[k])
+					{
+						pos = 1;
+					}
+					}
+					switch (pos)
+					{
+						case 0:
+							nJ0[c0] = J[k];
+							nD0[c0] = D[k];
+							c0++;
+							break;
+						case 1:
+							nJ1[c1] = J[k];
+							nD1[c1] = D[k];
+							c1++;
+							break;
+						case 2:
+							nJ2[c2] = J[k];
+							nD2[c2] = D[k];
+							c2++;
+					}
+					if (pos == 1)
+					{
+						pos++;
+					}
+				}
+			}
+			return std::vector<CSRMatrix*>
+			{
+				new CSRMatrix(nI0, nJ0, nD0, numRows_Renamed, numCols_Renamed),
+				new CSRMatrix(nI1, nJ1, nD1, numRows_Renamed, numCols_Renamed),
+				new CSRMatrix(nI2, nJ2, nD2, numRows_Renamed, numCols_Renamed)
+			};
+		}
+
+		int CSRMatrix::rowSum(int index)
+		{
+			return I[index + 1] - I[index];
+		}
+
+		double CSRMatrix::weightedRowSum(int index)
+		{
+			double sum = 0;
+			for (int i = I[index]; i < I[index + 1]; i++)
+			{
+				sum += D[i];
+			}
+			return sum;
+		}
+
+		std::vector<std::vector<int>> CSRMatrix::matchingSet()
+		{
+//JAVA TO C++ CONVERTER NOTE: The following call to the 'RectangularVectors' helper class reproduces the rectangular array initialization that is automatic in Java:
+//ORIGINAL LINE: int[][] M = new int[J.length][2];
+			std::vector<std::vector<int>> M = RectangularVectors::ReturnRectangularIntVector(J.size(), 2);
+			int count = 0;
+			std::vector<float> W(J.size());
+			for (int i = 0;i < I.size() - 1;i++)
+			{
+				for (int k = I[i];k < I[i + 1];k++)
+				{
+					/*double wi = weightedRowSum(i), wj = weightedRowSum(J[k]);
+					W[k]=1/((float)(Math.random()+rowSum(i)*wi/(wi+wj)+rowSum(J[k])*wj/(wi+wj))); //10% time dif*/
+					W[k] = 1 / (static_cast<float>(Math::random() + rowSum(i) + rowSum(J[k])));
+				}
+			}
+			bool found = true;
+			while (found)
+			{
+				found = false;
+				for (int i = 0;i < I.size() - 1;i++)
+				{
+					for (int k = I[i]; k < I[i + 1]; k++)
+					{
+						if (W[k] != 0)
+						{
+							found = true;
+							int j = J[k];
+							bool isMax = true;
+							for (int k0 = I[i];k0 < I[i + 1] && isMax;k0++)
+							{
+								if (W[k0] > W[k])
+								{
+									isMax = false;
+								}
+							}
+							for (int k0 = I[j];k0 < I[j + 1] && isMax;k0++)
+							{
+								if (W[k0] > W[k])
+								{
+									isMax = false;
+								}
+							}
+							if (isMax)
+							{
+								int min = (i < j) ? i : j;
+								M[count][0] = min;
+								M[count][1] = i + j - min;
+								count++;
+								//erase
+								for (int i0 = 0;i0 < I.size() - 1;i0++)
+								{
+									for (int k0 = I[i0];k0 < I[i0 + 1];k0++)
+									{
+										  if (i0 == i || i0 == j || J[k0] == i || J[k0] == j)
+										  {
+											  W[k0] = 0;
+										  }
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+//JAVA TO C++ CONVERTER NOTE: The following call to the 'RectangularVectors' helper class reproduces the rectangular array initialization that is automatic in Java:
+//ORIGINAL LINE: int[][] set = new int[count][2];
+			std::vector<std::vector<int>> set = RectangularVectors::ReturnRectangularIntVector(count, 2);
+			for (int i = 0; i < count; i++)
+			{
+				set[i] = M[i];
+			}
+			return set;
+		}
+
+		CSRMatrix *CSRMatrix::partition(CSRMatrix *A, int numParts)
+		{
+			std::vector<std::vector<int>> m;
+			CSRMatrix *p = identity(A->numRows_Renamed);
+			do
+			{
+				m = A->matchingSet();
+				CSRMatrix *np = interpolationMatrix(A,m);
+				A = mult({np, A->toLaplacian(), np->transpose()})->fromLaplacian(); //P * L * P^T = nL
+				p = np->mult({p});
+			} while (m.size() != 0 && p->numRows_Renamed > numParts);
+			return p;
+		}
+
+		CSRMatrix *CSRMatrix::toLaplacian()
+		{
+			std::vector<int> nI(I.size()), nJ = std::vector<int>(J.size() + I.size() - 1);
+			std::vector<double> nD(D.size() + I.size() - 1);
+			for (int i = 1; i < I.size(); i++)
+			{
+				nI[i] = I[i] + i;
+			}
+			int count = 0;
+			for (int i = 0;i < I.size() - 1; i++)
+			{
+				bool passed = false;
+				for (int k = I[i]; k < I[i + 1]; k++)
+				{
+					if (!passed && J[k] > i)
+					{
+						double sum = 0;
+						for (int k0 = I[i]; k0 < I[i + 1]; k0++)
+						{
+							sum += D[k0];
+						}
+						nJ[k + count] = i;
+						nD[k + count] = sum;
+						count++;
+						passed = true;
+					}
+					nJ[k + count] = J[k];
+					nD[k + count] = -D[k];
+				}
+				if (!passed)
+				{
+					double sum = 0;
+					for (int k0 = I[i]; k0 < I[i + 1]; k0++)
+					{
+						sum += D[k0];
+					}
+					nJ[I[i + 1] + count] = i;
+					nD[I[i + 1] + count] = sum;
+					count++;
+				}
+			}
+			return new CSRMatrix(nI, nJ, nD, numRows_Renamed, numCols_Renamed);
+		}
+
+		CSRMatrix *CSRMatrix::fromLaplacian()
+		{
+			std::vector<int> nI(I.size()), nJ = std::vector<int>(J.size() - (I.size() - 1));
+			std::vector<double> nD(D.size() - (I.size() - 1));
+			for (int i = 1; i < I.size(); i++)
+			{
+				nI[i] = I[i] - i;
+			}
+			int count = 0;
+			for (int i = 0;i < I.size() - 1; i++)
+			{
+				bool passed = false;
+				for (int k = nI[i]; k < nI[i + 1]; k++)
+				{
+					if (!passed && J[k + count] >= i)
+					{
+						count++;
+						passed = true;
+					}
+					nJ[k] = J[k + count];
+					nD[k] = -D[k + count];
+				}
+				if (!passed)
+				{
+					count++;
+				}
+			}
+			return new CSRMatrix(nI, nJ, nD, numRows_Renamed, numCols_Renamed);
+		}
+
+		CSRMatrix *CSRMatrix::interpolationMatrix(CSRMatrix *A, std::vector<std::vector<int>> &set)
+		{
+			int n = A->numRows_Renamed;
+			std::vector<bool> accounted(n);
+			for (int i = 0; i < set.size(); i++)
+			{
+				accounted[set[i][0]] = true;
+				accounted[set[i][1]] = true;
+			}
+			std::vector<int> leftover(n - 2*set.size());
+			int count = 0;
+			for (int i = 0;i < accounted.size();i++)
+			{
+				if (!accounted[i])
+				{
+					leftover[count] = i;
+					count++;
+				}
+			}
+			std::vector<int> nI(n - set.size() + 1), nJ = std::vector<int>(n);
+			std::vector<double> nD(n);
+			for (int i = 0;i < set.size();i++)
+			{
+				nI[i + 1] = 2*(i + 1);
+				nJ[2*i] = set[i][0];
+				nJ[2*i + 1] = set[i][1];
+				nD[2*i] = 1;
+				nD[2*i + 1] = 1;
+			}
+			count = 2*set.size();
+			for (int i = set.size() + 1;i < n - set.size() + 1;i++)
+			{
+				nI[i] = nI[i - 1] + 1;
+				nJ[count] = leftover[i - (set.size() + 1)];
+				nD[count] = 1;
+				count++;
+			}
+			return new CSRMatrix(nI,nJ,nD,nI.size() - 1,A->I.size() - 1);
+		}
+
+		CSRMatrix *CSRMatrix::mult(std::vector<CSRMatrix> &Ms)
+		{
+			CSRMatrix *ret = Ms[0];
+			for (int i = 1; i < Ms->length; i++)
+			{
+				ret = ret->mult(Ms[i]);
+			}
+			return ret;
+		}
+
+		CSRMatrix *CSRMatrix::randomSparseMatrix(int numEntries, int numCols, int numRows, std::vector<double> &weights)
+		{
+			return new CSRMatrix(TradMatrix::randomSparseMatrix(numEntries, numRows, numCols, weights));
+		}
+
+		void CSRMatrix::scale(double d)
+		{
+			for (int i = 0; i < D.size(); i++)
+			{
+				D[i] *= d;
+			}
+		}
+
+		CSRMatrix *CSRMatrix::importFromTxtSorted(java::io::File *f)
+		{
+//JAVA TO C++ CONVERTER TODO TASK: Local classes are not converted by Java to C++ Converter:
+//			class PairWeight implements Comparable<PairWeight>
+				//		{
+				//			int x, y;
+				//			double w;
+				//			PairWeight(int xx, int yy, double ww)
+				//			{
+				//				x = xx;
+				//				y = yy;
+				//				w = ww;
+				//			}
+				//			@@Override public int compareTo(PairWeight p)
+				//			{
+				//				if(p.x> x)
+				//					return -1;
+				//				if(p.x<x)
+				//					return 1;
+				//				if(p.y> y)
+				//					return -1;
+				//				if(p.y<y)
+				//					return 1;
+				//				return 0;
+				//			}
+				//		}
+			std::vector<PairWeight*> pairs;
+			std::wstring line, delim = L" ";
+//JAVA TO C++ CONVERTER NOTE: The following 'try with resources' block is replaced by its C++ equivalent:
+//ORIGINAL LINE: try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(f)))
+			java::io::FileReader tempVar(f);
+			java::io::BufferedReader *br = new java::io::BufferedReader(&tempVar);
+			try
+			{
+				while ((line = br->readLine()) != L"" && line[0] != L'\t')
+				{
+					int x = std::stoi(line.substr(0,(int)line.find(delim)));
+					line = line.substr((int)line.find(delim));
+					int y = std::stoi(line.substr(0,(int)line.find(delim)));
+					line = line.substr((int)line.find(delim));
+					double w = std::stod(line);
+					PairWeight tempVar2(x,y,w);
+					pairs.push_back(&tempVar2);
+				}
+				delete br;
+			}
+			catch (const java::io::IOException &e)
+			{
+				e->printStackTrace();
+			}
+				delete br;
+			int maxRow = pairs[pairs.size() - 1]->x;
+			std::vector<int> nI(maxRow + 2), nJ = std::vector<int>(pairs.size());
+			std::vector<double> nD(pairs.size());
+			for (int i = 0; i < pairs.size(); i++)
+			{
+				PairWeight *p = pairs[i];
+				nI[p->x + 1]++;
+				nJ[i] = p->y;
+				nD[i] = p->w;
+			}
+			for (int i = 2; i < maxRow + 1; i++)
+			{
+				nI[i] += nI[i - 1];
+			}
+			return new CSRMatrix(nI, nJ, nD, 0, 0);
+		}
+
+		std::wstring CSRMatrix::toString()
+		{
+			std::wstring s = L"[";
+			for (int i = 0; i < I.size(); i++)
+			{
+				s += std::to_wstring(I[i]) + L"\t";
+			}
+			s = s.substr(0,s.length() - 1) + L"]\n[";
+			for (int i = 0; i < J.size(); i++)
+			{
+				s += std::to_wstring(J[i]) + L"\t";
+			}
+			s = s.substr(0,s.length() - 1) + L"]\n[";
+			for (int i = 0; i < D.size(); i++)
+			{
+				s += std::to_wstring(D[i]) + L"\t";
+			}
+			return s.substr(0,s.length() - 1) + L"]";
+		}
+
+		CSRMatrix *CSRMatrix::connectedComponents(CSRMatrix *A)
+		{
+			return partition(A,1);
+		}
+	}
+}
